@@ -1,18 +1,16 @@
 from pydantic import BaseModel
-from pdf2image import convert_from_path
 from openai import OpenAI
 import base64
-from io import BytesIO
 from app.core.config import settings
+import requests
 
-class Page(BaseModel):
+class PageData(BaseModel):
     page_number: int
     page_text: str  
     page_summary: str
     has_image: bool
     total_page: int
-    has_table: bool
-    page_file_path: str
+    page_image_path: str
 
     @staticmethod
     def get_page_summary_prompt(img_b64: str):
@@ -36,16 +34,13 @@ class Page(BaseModel):
     def make_page_summary(self):
         client = OpenAI(api_key=settings.VLM_API_KEY)
 
-        images = convert_from_path(self.page_file_path, fmt='jpeg', dpi=200)
-        if not images:
-            raise Exception(f"[Page {self.page_number}] PDF를 이미지로 추출할 수 없습니다. (파일: {self.page_file_path})")
-
-        img = images[0]
-        buffered = BytesIO()
-        img.save(buffered, format="JPEG")
-        img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
         try:
+            response = requests.get(self.page_image_path)
+            if response.status_code != 200:
+                raise Exception(f"이미지 다운로드 실패: {response.status_code}")
+
+            img_b64 = base64.b64encode(response.content).decode("utf-8")
+
             response = client.chat.completions.create(
                 model=settings.VLM_MODEL_NAME,
                 messages=self.get_page_summary_prompt(img_b64),
