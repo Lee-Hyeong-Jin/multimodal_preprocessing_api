@@ -5,10 +5,10 @@ class Metadata(BaseModel):
     origin_path: str
     page_number: int
     has_image: bool
-    has_table: bool
-    page_summary: str
+    image_description: str
     page_text: str
     total_page: int
+    page_image_path: str
 
     """
     page_number: int
@@ -25,10 +25,10 @@ class Metadata(BaseModel):
             origin_path=origin_path,
             page_number=page.page_number,
             has_image=page.has_image,
-            has_table=page.has_table,
-            page_summary=page.page_summary,
+            image_description=page.page_summary,
             page_text=page.page_text,
-            total_page=page.total_page
+            total_page=page.total_page,
+            page_image_path=page.page_image_path
         )
 
     def enqueue(self):

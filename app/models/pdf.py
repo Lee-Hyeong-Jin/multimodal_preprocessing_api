@@ -2,40 +2,46 @@ import fitz
 from pathlib import Path
 from typing import List
 from pydantic import BaseModel
-from app.models.page import Page
+from app.models.page import PageData
 from app.models.metadata import Metadata
+from io import BytesIO
+from app.utils.object_storage.minio import upload_image_to_os
 
 class PDF(BaseModel):
     origin_file_path: str
     file_path: str
-    pages: List[Page] = []
+    pages: List[PageData] = []
 
     def preprocess(self):
         pdf_path = Path(self.file_path)
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
 
-        output_dir = pdf_path.parent / f"{pdf_path.stem}_pages"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = "multimodal_manual" / pdf_path.parent / f"{pdf_path.stem}_pages"
 
         for i in range(total_pages):
             page = doc[i]
             has_image = bool(page.get_images(full=True))
             page_text = page.get_text()
         
-            page_file_path = output_dir / f"{pdf_path.stem}_page_{i+1}.pdf"
-            page_doc = fitz.open()
-            page_doc.insert_pdf(doc, from_page=i, to_page=i)
-            page_doc.save(page_file_path)
+            pix = page.get_pixmap(dpi=200)
+            img_bytes = BytesIO(pix.tobytes("jpeg"))
+            bucket_key = output_dir / pdf_path.name
 
-            page_obj = Page(
+            # S3에 업로드
+            try:
+                os_url = upload_image_to_os(img_bytes, key=str(bucket_key))
+            except Exception as e:
+                print(f"[❌ Page {i+1}] S3 업로드 실패: {e}")
+                continue
+
+            page_obj = PageData(
                 page_number=i + 1,
                 page_text=page_text,  # LLM 추출로 대체될 예정
                 page_summary="",
                 has_image=has_image,
-                has_table=False,  # 추후 LLM이 판단
                 total_page=total_pages,
-                page_file_path=str(page_file_path),
+                page_image_path=os_url,
             )
 
             try:
