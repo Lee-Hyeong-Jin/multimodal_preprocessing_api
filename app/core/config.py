@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     RABBITMQ_HOST: str = "localhost"
     RABBITMQ_DEFAULT_USER: str = "guest"
     RABBITMQ_DEFAULT_PASS: str = "guest"
+    RABBITMQ_PORT: int = 5671
 
     # ObjectStorage(OS) Settings
     OS_ACCESS_KEY_ID: str = ""
