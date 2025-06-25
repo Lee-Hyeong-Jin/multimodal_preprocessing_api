@@ -1,6 +1,5 @@
 import boto3
 from io import BytesIO
-from uuid import uuid4
 from app.core.config import settings
 
 
@@ -13,7 +12,7 @@ def upload_image_to_os(img: BytesIO, key:str, suffix: str = ".jpg") -> str:
         region_name=settings.OS_REGION,
     )
 
-    key = f"pdf_pages/{uuid4()}{suffix}"
+    key = f"{key}{suffix}"
     img.seek(0)
     s3.upload_fileobj(img, settings.OS_BUCKET_NAME, key, ExtraArgs={"ContentType": "image/jpeg"})
 
