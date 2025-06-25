@@ -17,7 +17,7 @@ class PDF(BaseModel):
         doc = fitz.open(pdf_path)
         total_pages = len(doc)
 
-        output_dir = "multimodal_manual" / pdf_path.parent / f"{pdf_path.stem}_pages"
+        output_dir = Path(f"multimodal_manual/{self.origin_file_path}/{pdf_path.stem}_pages")
 
         for i in range(total_pages):
             page = doc[i]
@@ -26,7 +26,7 @@ class PDF(BaseModel):
         
             pix = page.get_pixmap(dpi=200)
             img_bytes = BytesIO(pix.tobytes("jpeg"))
-            bucket_key = output_dir / pdf_path.name
+            bucket_key = output_dir / f"{pdf_path.stem}_{i+1}"
 
             # S3에 업로드
             try:
