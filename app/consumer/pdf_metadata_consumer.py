@@ -10,9 +10,6 @@ from app.utils.embedding.embedding_test import embedding
 
 INDEX = "029_multimodal_manual_20250624"
 
-print(settings.OPENSEARCH_HOST)
-print(settings.OPENSEARCH_USER)
-print(settings.OPENSEARCH_PASS)
 client = OpenSearch(
     hosts=[settings.OPENSEARCH_HOST],
     http_auth=(settings.OPENSEARCH_USER, settings.OPENSEARCH_PASS),
@@ -193,10 +190,11 @@ def main():
     ensure_index_exists()
     username = settings.RABBITMQ_DEFAULT_USER
     password = settings.RABBITMQ_DEFAULT_PASS
+    host = settings.RABBITMQ_HOST
+    port = settings.RABBITMQ_PORT
 
-    print(f"{username}:{password}:::{settings.RABBITMQ_HOST}")
     credentials = pika.PlainCredentials(username, password)
-    parameters = pika.ConnectionParameters(host="localhost", credentials=credentials)
+    parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
 
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()

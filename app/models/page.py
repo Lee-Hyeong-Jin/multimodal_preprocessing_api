@@ -50,5 +50,5 @@ class PageData(BaseModel):
             self.page_summary = response.choices[0].message.content.strip()
 
         except Exception as e:
-            raise Exception(f"[Page {self.page_number}] OpenAI GPT 요약 실패: {e} (파일: {self.page_file_path})")
+            raise Exception(f"[Page {self.page_number}] OpenAI GPT 요약 실패: {e} (파일: {self.page_image_path})")
 

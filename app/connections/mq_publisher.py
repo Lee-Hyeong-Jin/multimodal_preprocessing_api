@@ -6,9 +6,10 @@ class MQPublisher:
     def __init__(self, host: str):
         username = settings.RABBITMQ_DEFAULT_USER
         password = settings.RABBITMQ_DEFAULT_PASS
+        port = settings.RABBITMQ_PORT
 
         credentials = pika.PlainCredentials(username, password)
-        parameters = pika.ConnectionParameters(host=host, credentials=credentials)
+        parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
 
         self.connection = pika.BlockingConnection(parameters)
         self.channel = self.connection.channel()
