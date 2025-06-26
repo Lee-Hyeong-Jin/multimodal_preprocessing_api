@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     OPENSEARCH_PASS: str = ""
     OPENSEARCH_INITIAL_ADMIN_PASSWORD: str = ""
 
+    # DB Settings
+    DB_HOST: str = ""
+    DB_PORT: int = 5432
+    DB_NAME: str = ""
+    DB_USER: str = ""
+    DB_PASS: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

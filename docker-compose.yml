@@ -80,7 +80,7 @@ services:
     volumes:
       - opensearch-data2:/usr/share/opensearch/data
   opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:latest # Make sure the version of opensearch-dashboards matches the version of opensearch installed on other nodes
+    image: opensearchproject/opensearch-dashboards:2.13.0 # Make sure the version of opensearch-dashboards matches the version of opensearch installed on other nodes
     container_name: opensearch-dashboards
     ports:
       - 5601:5601 # Map host port 5601 to container port 5601
@@ -88,6 +88,32 @@ services:
       - "5601" # Expose port 5601 for web access to OpenSearch Dashboards
     environment:
       OPENSEARCH_HOSTS: '["https://opensearch-node1:9200","https://opensearch-node2:9200"]' # Define the OpenSearch nodes that OpenSearch Dashboards will query
+
+  db:
+    image: postgres
+    restart: always
+    shm_size: 128mb
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASS}
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - 8080:8080
+
+  pdf_meta_data_consumer:
+    build:
+      context: .
+      dockerfile: docker/consumer/pdf_metadata_consumer/Dockerfile
+    container_name: pdf_metadata_consumer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+
+
 
 volumes:
   opensearch-data1:
