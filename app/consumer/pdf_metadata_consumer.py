@@ -71,7 +71,7 @@ def insert_chunked_data(data: List[Dict]) -> bool:
     cursor = conn.cursor()
 
     insert_query = """
-        INSERT INTO multimodal.metadata_chunk_table (
+        INSERT INTO multimodal.manual_metadata_chunk_table (
             origin_id, chunk_id, chunk_content, chunk_embedding, chunk_embedding__1024,
             image_description_embedding, image_description_embedding__1024,
             page_number, total_page, origin_file_name, origin_file_path,

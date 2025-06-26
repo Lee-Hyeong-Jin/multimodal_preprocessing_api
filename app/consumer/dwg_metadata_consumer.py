@@ -1,18 +1,144 @@
 from typing import Dict
 import pika
 import json
+import logging
+import psycopg2
+import sys
+from psycopg2.extras import execute_values
 from app.core.config import settings
-from opensearchpy import OpenSearch
 from app.utils.embedding.embedding_test import embedding
 
-INDEX = "029_multimodal_dwg_20250625"
-
-client = OpenSearch(
-    hosts=[settings.OPENSEARCH_HOST],
-    http_auth=(settings.OPENSEARCH_USER, settings.OPENSEARCH_PASS),
-    use_ssl=True,
-    verify_certs=False
+# ✅ 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
+logger = logging.getLogger(__name__)
+
+
+def create_table_if_not_exists():
+    conn = psycopg2.connect(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        dbname=settings.DB_NAME,
+        user=settings.DB_USER,
+        password=settings.DB_PASS
+    )
+    cursor = conn.cursor()
+    create_query = """
+    CREATE TABLE IF NOT EXISTS multimodal.dwg_metadata_chunk_table (
+        id SERIAL PRIMARY KEY,
+        drawing_id TEXT,
+        summary TEXT,
+        image_path TEXT,
+        image_type TEXT,
+        image_description TEXT,
+        textual_info TEXT,
+        info_project TEXT,
+        info_title TEXT,
+        info_dwg_no TEXT,
+        info_rev TEXT,
+        info_scale TEXT,
+        parts JSONB,
+        _dwg_filename TEXT,
+        _dwg_filepath TEXT,
+        _drawing_id TEXT,
+        _num_images INTEGER,
+        image_url TEXT,
+        textual_info_embedding FLOAT8[],
+        textual_info_embedding__1024 FLOAT8[],
+        image_description_embedding FLOAT8[],
+        image_description_embedding__1024 FLOAT8[],
+        created_date TIMESTAMPTZ DEFAULT NOW(),
+        updated_date TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE OR REPLACE FUNCTION update_updated_date()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_date = NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS set_updated_date ON multimodal.dwg_metadata_chunk_table;
+
+    CREATE TRIGGER set_updated_date
+    BEFORE UPDATE ON multimodal.dwg_metadata_chunk_table
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_updated_date();
+    """
+    try:
+        cursor.execute(create_query)
+        conn.commit()
+        logger.info("✅ PostgreSQL table created or already exists")
+    except Exception as e:
+        logger.exception("❌ PostgreSQL table creation failed")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def insert_to_postgres(data: Dict) -> bool:
+    conn = psycopg2.connect(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        dbname=settings.DB_NAME,
+        user=settings.DB_USER,
+        password=settings.DB_PASS
+    )
+    cursor = conn.cursor()
+
+    insert_query = """
+        INSERT INTO multimodal.dwg_metadata_chunk_table (
+            drawing_id, summary, image_path, image_type, image_description,
+            textual_info, info_project, info_title, info_dwg_no, info_rev,
+            info_scale, parts, _dwg_filename, _dwg_filepath, _drawing_id,
+            _num_images, image_url, textual_info_embedding, textual_info_embedding__1024,
+            image_description_embedding, image_description_embedding__1024
+        )
+        VALUES %s
+    """
+
+    values = [(
+        data.get("drawing_id", ""),
+        data.get("summary", ""),
+        data.get("image_path", ""),
+        data.get("image_type", ""),
+        data.get("image_description", ""),
+        data.get("textual_info", ""),
+        data.get("info_project", ""),
+        data.get("info_title", ""),
+        data.get("info_dwg_no", ""),
+        data.get("info_rev", ""),
+        data.get("info_scale", ""),
+        json.dumps(data.get("parts", [])),
+        data.get("_dwg_filename", ""),
+        data.get("_dwg_filepath", ""),
+        data.get("_drawing_id", ""),
+        data.get("_num_images", 0),
+        data.get("image_url", ""),
+        data.get("textual_info_embedding", []),
+        data.get("textual_info_embedding__1024", []),
+        data.get("image_description_embedding", []),
+        data.get("image_description_embedding__1024", [])
+    )]
+
+    try:
+        execute_values(cursor, insert_query, values)
+        conn.commit()
+        logger.info("✅ Drawing data inserted into PostgreSQL")
+        return True
+    except Exception as e:
+        logger.exception("❌ PostgreSQL insert failed")
+        conn.rollback()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
 
 def build_chunk(data: Dict) -> Dict:
     textual_info = data.get("page_text", "")
@@ -24,7 +150,7 @@ def build_chunk(data: Dict) -> Dict:
     image_description_embedding = embedding(text=image_description)
     image_description_embedding__1024 = image_description_embedding[:1024]
 
-    chunk = {
+    return {
         "drawing_id": data.get("drawing_id", ""),
         "summary": data.get("page_summary", ""),
         "image_path": data.get("image_path", ""),
@@ -47,120 +173,41 @@ def build_chunk(data: Dict) -> Dict:
         "image_description_embedding": image_description_embedding,
         "image_description_embedding__1024": image_description_embedding__1024
     }
-    return chunk
 
-def index_to_opensearch(chunk: dict):
-    global INDEX
-    try:
-        response = client.index(
-            index=INDEX,
-            body=chunk
-        )
-        print(f"[📌 Indexed] {response['_id']} → {response['result']}")
-    except Exception as e:
-        print(f"[❌ OpenSearch index error] {e}")
 
 def callback(ch, method, properties, body):
     try:
+        logger.info("📥 Received message from queue")
         msg = json.loads(body)
         chunk = build_chunk(msg)
-        index_to_opensearch(chunk)
-        print("[✅ Received and indexed chunk]")
-    except Exception as e:
-        print(f"[❌ Error handling message] {e}")
-        print(body)
+        success = insert_to_postgres(chunk)
 
-def ensure_index_exists():
-    global INDEX
-    if not client.indices.exists(index=INDEX):
-        print(f"[ℹ️  Index '{INDEX}' not found. Creating it...]")
-        client.indices.create(
-            index=INDEX,
-            body={
-                "settings": {
-                    "index": {"knn": True},
-                    "analysis": {
-                        "analyzer": {
-                            "nori_analyzer": {
-                                "type": "custom",
-                                "tokenizer": "nori_tokenizer",
-                                "filter": ["lowercase"]
-                            }
-                        }
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "drawing_id": {"type": "keyword"},
-                        "summary": {"type": "text", "analyzer": "nori_analyzer"},
-                        "image_path": {"type": "keyword"},
-                        "image_type": {"type": "keyword"},
-                        "image_description": {"type": "text", "analyzer": "nori_analyzer"},
-                        "textual_info": {"type": "text", "analyzer": "nori_analyzer"},
-                        "info_project": {"type": "keyword"},
-                        "info_title": {"type": "text", "analyzer": "nori_analyzer"},
-                        "info_dwg_no": {"type": "keyword"},
-                        "info_rev": {"type": "keyword"},
-                        "info_scale": {"type": "keyword"},
-                        "parts": {"type": "nested"},
-                        "_dwg_filename": {"type": "keyword"},
-                        "_dwg_filepath": {"type": "keyword"},
-                        "_drawing_id": {"type": "keyword"},
-                        "_num_images": {"type": "integer"},
-                        "image_url": {"type": "keyword"},
-                        "textual_info_embedding": {
-                            "type": "knn_vector", "dimension": 3072,
-                            "method": {
-                                "engine": "nmslib", "space_type": "cosinesimil", "name": "hnsw",
-                                "parameters": {"ef_construction": 128, "m": 24}
-                            }
-                        },
-                        "textual_info_embedding__1024": {
-                            "type": "knn_vector", "dimension": 1024,
-                            "method": {
-                                "engine": "nmslib", "space_type": "cosinesimil", "name": "hnsw",
-                                "parameters": {"ef_construction": 128, "m": 24}
-                            }
-                        },
-                        "image_description_embedding": {
-                            "type": "knn_vector", "dimension": 3072,
-                            "method": {
-                                "engine": "nmslib", "space_type": "cosinesimil", "name": "hnsw",
-                                "parameters": {"ef_construction": 128, "m": 24}
-                            }
-                        },
-                        "image_description_embedding__1024": {
-                            "type": "knn_vector", "dimension": 1024,
-                            "method": {
-                                "engine": "nmslib", "space_type": "cosinesimil", "name": "hnsw",
-                                "parameters": {"ef_construction": 128, "m": 24}
-                            }
-                        }
-                    }
-                }
-            }
-        )
-        print(f"[✅ Index '{INDEX}' created.]")
-    else:
-        print(f"[✅ Index '{INDEX}' already exists.]")
+        if success:
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            logger.info("✅ Message processed and acknowledged")
+        else:
+            logger.warning("⚠️ Insert failed — message will be retried (not acknowledged)")
+    except Exception as e:
+        logger.exception("❌ Unexpected error during message processing")
+
 
 def main():
-    ensure_index_exists()
-    username = settings.RABBITMQ_DEFAULT_USER
-    password = settings.RABBITMQ_DEFAULT_PASS
-    host = settings.RABBITMQ_HOST
-    port = settings.RABBITMQ_PORT
+    create_table_if_not_exists()
 
-    credentials = pika.PlainCredentials(username, password)
-    parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
+    credentials = pika.PlainCredentials(settings.RABBITMQ_DEFAULT_USER, settings.RABBITMQ_DEFAULT_PASS)
+    parameters = pika.ConnectionParameters(host=settings.RABBITMQ_HOST, port=settings.RABBITMQ_PORT, credentials=credentials)
 
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     channel.queue_declare(queue='pdf_metadata', durable=True)
 
-    channel.basic_consume(queue="pdf_metadata", on_message_callback=callback, auto_ack=True)
-    print("[*] Waiting for messages...")
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(queue='pdf_metadata', on_message_callback=callback, auto_ack=False)
+
+    logger.info("🚀 Worker started. Waiting for messages...")
     channel.start_consuming()
+
 
 if __name__ == "__main__":
     main()
+
