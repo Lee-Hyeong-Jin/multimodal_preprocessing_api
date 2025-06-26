@@ -37,17 +37,17 @@ def build_chunk(data: Dict, chunk_size: int = 500, overlap_size: int = 100) -> L
     for idx, chunk in enumerate(chunks):
         chunk_content = chunk["Content"]
 
-        chunk_embedding = embedding(text=chunk_content)[:1024]
-        image_desc_embedding = embedding(text=image_description)[:1024]
+        chunk_embedding = embedding(text=chunk_content)
+        image_desc_embedding = embedding(text=image_description)
 
         result = {
             "origin_id": origin_id,
             "chunk_id": idx,
             "chunk_content": chunk_content,
             "chunk_embedding": chunk_embedding,
-            "chunk_embedding__1024": chunk_embedding,
+            "chunk_embedding__1024": chunk_embedding[:1024],
             "image_description_embedding": image_desc_embedding,
-            "image_description_embedding__1024": image_desc_embedding,
+            "image_description_embedding__1024": image_desc_embedding[:1024],
             "page_number": page_number,
             "total_page": total_page,
             "origin_file_name": origin_file_name,
@@ -149,7 +149,7 @@ def create_table_if_not_exists():
         page_image_path TEXT,
         created_date TIMESTAMPTZ DEFAULT NOW(),
         updated_date TIMESTAMPTZ DEFAULT NOW(),
-        indexed_date TIMESTAMPTZ
+        indexed_date TIMESTAMPTZ DEFAULT NULL
     );
 
     CREATE OR REPLACE FUNCTION update_updated_date()

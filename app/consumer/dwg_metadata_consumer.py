@@ -7,6 +7,7 @@ import sys
 from psycopg2.extras import execute_values
 from app.core.config import settings
 from app.utils.embedding.embedding_test import embedding
+from psycopg2.extras import Json
 
 # ✅ 로깅 설정
 logging.basicConfig(
@@ -51,7 +52,8 @@ def create_table_if_not_exists():
         image_description_embedding FLOAT8[],
         image_description_embedding__1024 FLOAT8[],
         created_date TIMESTAMPTZ DEFAULT NOW(),
-        updated_date TIMESTAMPTZ DEFAULT NOW()
+        updated_date TIMESTAMPTZ DEFAULT NOW(),
+        indexed_date TIMESTAMPTZ DEFAULT NULL
     );
 
     CREATE OR REPLACE FUNCTION update_updated_date()
@@ -114,7 +116,7 @@ def insert_to_postgres(data: Dict) -> bool:
         data.get("info_dwg_no", ""),
         data.get("info_rev", ""),
         data.get("info_scale", ""),
-        json.dumps(data.get("parts", [])),
+        Json(data.get("parts", [])),
         data.get("_dwg_filename", ""),
         data.get("_dwg_filepath", ""),
         data.get("_drawing_id", ""),
