@@ -71,7 +71,7 @@ def insert_chunked_data(data: List[Dict]) -> bool:
     cursor = conn.cursor()
 
     insert_query = """
-        INSERT INTO chunk_table (
+        INSERT INTO multimodal.metadata_chunk_table (
             origin_id, chunk_id, chunk_content, chunk_embedding, chunk_embedding__1024,
             image_description_embedding, image_description_embedding__1024,
             page_number, total_page, origin_file_name, origin_file_path,
@@ -130,7 +130,9 @@ def create_table_if_not_exists():
     cursor = conn.cursor()
 
     create_table_query = """
-    CREATE TABLE IF NOT EXISTS chunk_table (
+    CREATE SCHEMA IF NOT EXISTS multimodal;
+
+    CREATE TABLE IF NOT EXISTS multimodal.manual_metadata_chunk_table (
         id SERIAL PRIMARY KEY,
         origin_id UUID,
         chunk_id INTEGER,
@@ -144,8 +146,26 @@ def create_table_if_not_exists():
         origin_file_name TEXT,
         origin_file_path TEXT,
         image_description TEXT,
-        page_image_path TEXT
+        page_image_path TEXT,
+        created_date TIMESTAMPTZ DEFAULT NOW(),
+        updated_date TIMESTAMPTZ DEFAULT NOW(),
+        indexed_date TIMESTAMPTZ
     );
+
+    CREATE OR REPLACE FUNCTION update_updated_date()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_date = NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS set_updated_date ON multimodal.manual_metadata_chunk_table;
+
+    CREATE TRIGGER set_updated_date
+    BEFORE UPDATE ON multimodal.manual_metadata_chunk_table
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_updated_date();
     """
 
     try:

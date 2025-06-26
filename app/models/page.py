@@ -25,7 +25,7 @@ class PageData(BaseModel):
                     },
                     {
                         "type": "text",
-                        "text": "이 이미지는 PDF 문서의 한 페이지입니다. 전체 내용을 이해한 뒤, 핵심 내용을 한 문단으로 요약해 주세요. 표나 이미지가 있어도 무시하지 말고 포함하세요."
+                        "text": "Please describe the attached image and table in full details, with a description of each object in the image.If the attached is a screenshot of a document chunk with multiple images in it, then you MUST describe details per image and table.Briefly summarize the above considerations in one sentence for each image and table. Answer in Korean only."
                     }
                 ]
             }
