@@ -2,55 +2,52 @@ from typing import Dict, List
 import pika
 import json
 import uuid
+import logging
+import sys
 from pathlib import Path
 from app.core.config import settings
-from opensearchpy import OpenSearch
 from app.utils.chunking.recursive_chunking import RecursiveStrategy
 from app.utils.embedding.embedding_test import embedding
+import psycopg2
+from psycopg2.extras import execute_values
 
-INDEX = "029_multimodal_manual_20250624"
-
-client = OpenSearch(
-    hosts=[settings.OPENSEARCH_HOST],
-    http_auth=(settings.OPENSEARCH_USER, settings.OPENSEARCH_PASS),
-    use_ssl=True,
-    verify_certs=False  # 개발 중엔 False, 운영에서는 TLS 인증서 확인을 위해 True 권장
+# ✅ 로거 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
+logger = logging.getLogger(__name__)
+
 
 def build_chunk(data: Dict, chunk_size: int = 500, overlap_size: int = 100) -> List[Dict]:
-    """
-    page_summary 또는 page_text를 chunk 단위로 나누어 결과 리스트 반환
-    """
     text = data.get("page_text", "")
     image_description = data.get("image_description", "")
     origin_path = Path(data.get("origin_path", ""))
     origin_file_name = origin_path.name
-    origin_id = str(uuid.uuid4())  # 문서 단위 ID
+    origin_id = str(uuid.uuid4())
     total_page = data.get("total_page")
     page_number = data.get("page_number")
     page_image_path = data.get("page_image_path", "")
 
     strategy = RecursiveStrategy()
     chunks = strategy.chunking(text, chunk_size=chunk_size, overlap=overlap_size)
+
     results = []
     for idx, chunk in enumerate(chunks):
         chunk_content = chunk["Content"]
 
-        chunk_embedding = embedding(text=chunk_content)
-        chunk_embedding__1024 = chunk_embedding[:1024]
-
-        image_description_embedding = embedding(text=image_description)
-        print(f">>{len(image_description_embedding)}")
-        image_description_embedding__1024 = image_description_embedding[:1024]
+        chunk_embedding = embedding(text=chunk_content)[:1024]
+        image_desc_embedding = embedding(text=image_description)[:1024]
 
         result = {
             "origin_id": origin_id,
             "chunk_id": idx,
             "chunk_content": chunk_content,
             "chunk_embedding": chunk_embedding,
-            "chunk_embedding__1024": chunk_embedding__1024,
-            "image_description_embedding": image_description_embedding,
-            "image_description_embedding__1024": image_description_embedding__1024,
+            "chunk_embedding__1024": chunk_embedding,
+            "image_description_embedding": image_desc_embedding,
+            "image_description_embedding__1024": image_desc_embedding,
             "page_number": page_number,
             "total_page": total_page,
             "origin_file_name": origin_file_name,
@@ -62,147 +59,129 @@ def build_chunk(data: Dict, chunk_size: int = 500, overlap_size: int = 100) -> L
 
     return results
 
-def index_to_opensearch(chunk: dict):
-    global INDEX
+
+def insert_chunked_data(data: List[Dict]) -> bool:
+    conn = psycopg2.connect(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        dbname=settings.DB_NAME,
+        user=settings.DB_USER,
+        password=settings.DB_PASS
+    )
+    cursor = conn.cursor()
+
+    insert_query = """
+        INSERT INTO chunk_table (
+            origin_id, chunk_id, chunk_content, chunk_embedding, chunk_embedding__1024,
+            image_description_embedding, image_description_embedding__1024,
+            page_number, total_page, origin_file_name, origin_file_path,
+            image_description, page_image_path
+        ) VALUES %s
+    """
+
+    values = [
+        (
+            row["origin_id"], row["chunk_id"], row["chunk_content"], row["chunk_embedding"],
+            row["chunk_embedding__1024"], row["image_description_embedding"], row["image_description_embedding__1024"],
+            row["page_number"], row["total_page"], row["origin_file_name"], row["origin_file_path"],
+            row["image_description"], row["page_image_path"]
+        ) for row in data
+    ]
 
     try:
-        response = client.index(
-            index=INDEX,
-            body=chunk
-        )
-        print(f"[📌 Indexed] {response['_id']} → {response['result']}")
+        execute_values(cursor, insert_query, values)
+        conn.commit()
+        logger.info(f"✅ Inserted {len(values)} chunks into PostgreSQL")
+        return True
     except Exception as e:
-        print(f"[❌ OpenSearch index error] {e}")
+        logger.error(f"❌ DB Insert Error: {e}")
+        conn.rollback()
+        return False
+    finally:
+        cursor.close()
+        conn.close()
+
 
 def callback(ch, method, properties, body):
     try:
         msg = json.loads(body)
+        logger.info("📥 Received message from queue")
         chunked_data = build_chunk(msg)
-        for chunk in chunked_data:
-            index_to_opensearch(chunk, )
-        print("[✅ Received and transformed]")
+        success = insert_chunked_data(chunked_data)
+
+        if success:
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            logger.info("✅ Message processed and acknowledged")
+        else:
+            logger.warning("⚠️ Message processing failed — will be retried")
     except Exception as e:
-        print(f"[❌ Error handling message] {e}")
-        print(body)
+        logger.exception(f"❌ Unexpected error while processing message: {e}")
+        logger.warning("⚠️ Message will be retried due to processing error")
 
 
-def ensure_index_exists():
-    global INDEX
+def create_table_if_not_exists():
+    conn = psycopg2.connect(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        dbname=settings.DB_NAME,
+        user=settings.DB_USER,
+        password=settings.DB_PASS
+    )
+    cursor = conn.cursor()
 
-    index_name = INDEX
-    if not client.indices.exists(index=index_name):
-        print(f"[ℹ️  Index '{index_name}' not found. Creating it...]")
-        client.indices.create(
-            index=index_name,
-            body = {
-                "settings": {
-                    "index": {
-                        "knn": True,
-                    },
-                    "analysis": {
-                        "analyzer": {
-                            "nori_analyzer": {
-                                "type": "custom",
-                                "tokenizer": "nori_tokenizer",
-                                "filter": ["lowercase"]
-                            }
-                        }
-                    }
-                },
-                "mappings": {
-                    "properties": {
-                        "chunk_content": {
-                            "type": "text",
-                            "analyzer": "nori_analyzer"
-                        },
-                        "image_description": {
-                            "type": "text",
-                            "analyzer": "nori_analyzer"
-                        },
-                        "chunk_embedding": {
-                            "dimension": 3072,
-                            "method": {
-                                "engine": "nmslib",
-                                "space_type": "cosinesimil",
-                                "name": "hnsw",
-                                "parameters": {
-                                    "ef_construction": 128,
-                                    "m": 24
-                                }
-                            },
-                            "type": "knn_vector"                        
-                        },
-                        "chunk_embedding__1024": {
-                            "dimension": 1024,
-                            "method": {
-                                "engine": "nmslib",
-                                "space_type": "cosinesimil",
-                                "name": "hnsw",
-                                "parameters": {
-                                    "ef_construction": 128,
-                                    "m": 24
-                                }
-                            },
-                            "type": "knn_vector"     
-                        },
-                        "image_description_embedding": {
-                            "dimension": 3072,
-                            "method": {
-                                "engine": "nmslib",
-                                "space_type": "cosinesimil",
-                                "name": "hnsw",
-                                "parameters": {
-                                    "ef_construction": 128,
-                                    "m": 24
-                                }
-                            },
-                            "type": "knn_vector"
-                        },
-                        "image_description_embedding__1024": {
-                            "dimension": 1024,
-                            "method": {
-                                "engine": "nmslib",
-                                "space_type": "cosinesimil",
-                                "name": "hnsw",
-                                "parameters": {
-                                    "ef_construction": 128,
-                                    "m": 24
-                                }
-                            },
-                            "type": "knn_vector"
-                        },
-                        "page_number": { "type": "integer" },
-                        "total_page": { "type": "integer" },
-                        "origin_file_name": { "type": "keyword" },
-                        "origin_file_path": { "type": "keyword" },
-                        "page_image_path": { "type": "keyword" },
-                        "origin_id": { "type": "keyword" },
-                        "chunk_id": { "type": "keyword" }
-                    }
-                }
-            }
-        )
-        print(f"[✅ Index '{index_name}' created.]")
-    else:
-        print(f"[✅ Index '{index_name}' already exists.]")
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS chunk_table (
+        id SERIAL PRIMARY KEY,
+        origin_id UUID,
+        chunk_id INTEGER,
+        chunk_content TEXT,
+        chunk_embedding FLOAT8[],
+        chunk_embedding__1024 FLOAT8[],
+        image_description_embedding FLOAT8[],
+        image_description_embedding__1024 FLOAT8[],
+        page_number INTEGER,
+        total_page INTEGER,
+        origin_file_name TEXT,
+        origin_file_path TEXT,
+        image_description TEXT,
+        page_image_path TEXT
+    );
+    """
+
+    try:
+        cursor.execute(create_table_query)
+        conn.commit()
+        logger.info("✅ Table check/creation complete")
+    except Exception as e:
+        logger.error(f"❌ Table creation error: {e}")
+        conn.rollback()
+    finally:
+        cursor.close()
+        conn.close()
+
 
 def main():
-    ensure_index_exists()
-    username = settings.RABBITMQ_DEFAULT_USER
-    password = settings.RABBITMQ_DEFAULT_PASS
-    host = settings.RABBITMQ_HOST
-    port = settings.RABBITMQ_PORT
+    create_table_if_not_exists()
 
-    credentials = pika.PlainCredentials(username, password)
-    parameters = pika.ConnectionParameters(host=host, port=port, credentials=credentials)
+    credentials = pika.PlainCredentials(
+        settings.RABBITMQ_DEFAULT_USER,
+        settings.RABBITMQ_DEFAULT_PASS
+    )
+    parameters = pika.ConnectionParameters(
+        host=settings.RABBITMQ_HOST,
+        port=settings.RABBITMQ_PORT,
+        credentials=credentials
+    )
 
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     channel.queue_declare(queue='pdf_metadata', durable=True)
+    channel.basic_qos(prefetch_count=1)
+    channel.basic_consume(queue="pdf_metadata", on_message_callback=callback, auto_ack=False)
 
-    channel.basic_consume(queue="pdf_metadata", on_message_callback=callback, auto_ack=True)
-    print("[*] Waiting for messages...")
+    logger.info("📡 Worker started. Waiting for messages...")
     channel.start_consuming()
+
 
 if __name__ == "__main__":
     main()
