@@ -201,10 +201,10 @@ def main():
 
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
-    channel.queue_declare(queue='pdf_metadata', durable=True)
+    channel.queue_declare(queue='multimodal_drawing', durable=True)
 
     channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue='pdf_metadata', on_message_callback=callback, auto_ack=False)
+    channel.basic_consume(queue='multimodal_drawing', on_message_callback=callback, auto_ack=False)
 
     logger.info("🚀 Worker started. Waiting for messages...")
     channel.start_consuming()
