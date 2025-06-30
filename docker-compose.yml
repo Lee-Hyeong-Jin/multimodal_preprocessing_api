@@ -113,6 +113,16 @@ services:
     env_file:
       - .env
 
+  dwg_meta_data_consumer:
+    build:
+      context: .
+      dockerfile: docker/consumer/dwg_metadata_consumer/Dockerfile
+    container_name: dwg_metadata_consumer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
 
 
 volumes:
