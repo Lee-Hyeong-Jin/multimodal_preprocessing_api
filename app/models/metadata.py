@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from app.core.di import get_mq_publisher
+from app.connections.mq_publisher import MQPublisher
 
 class Metadata(BaseModel):
     origin_path: str
@@ -32,8 +32,6 @@ class Metadata(BaseModel):
         )
 
     def enqueue(self):
-        mq_publisher = get_mq_publisher()
-        if not mq_publisher:
-            raise RuntimeError("MQPublisher is not initialized.")
-        mq_publisher.publish(self.model_dump())
+        MQPublisher.publish(self.model_dump())
+
 
