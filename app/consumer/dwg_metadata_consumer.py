@@ -44,8 +44,7 @@ def create_table_if_not_exists():
         parts JSONB,
         _dwg_filename TEXT,
         _dwg_filepath TEXT,
-        _drawing_id TEXT,
-        _num_images INTEGER,
+        _num_total_images INTEGER,
         image_url TEXT,
         textual_info_embedding FLOAT8[],
         textual_info_embedding__1024 FLOAT8[],
@@ -97,8 +96,8 @@ def insert_to_postgres(data: Dict) -> bool:
         INSERT INTO multimodal.dwg_metadata_chunk_table (
             drawing_id, summary, image_path, image_type, image_description,
             textual_info, info_project, info_title, info_dwg_no, info_rev,
-            info_scale, parts, _dwg_filename, _dwg_filepath, _drawing_id,
-            _num_images, image_url, textual_info_embedding, textual_info_embedding__1024,
+            info_scale, parts, _dwg_filename, _dwg_filepath,
+            _num_total_images, image_url, textual_info_embedding, textual_info_embedding__1024,
             image_description_embedding, image_description_embedding__1024
         )
         VALUES %s
@@ -119,8 +118,7 @@ def insert_to_postgres(data: Dict) -> bool:
         Json(data.get("parts", [])),
         data.get("_dwg_filename", ""),
         data.get("_dwg_filepath", ""),
-        data.get("_drawing_id", ""),
-        data.get("_num_images", 0),
+        data.get("_num_total_images", 0),
         data.get("image_url", ""),
         data.get("textual_info_embedding", []),
         data.get("textual_info_embedding__1024", []),
@@ -143,8 +141,8 @@ def insert_to_postgres(data: Dict) -> bool:
 
 
 def build_chunk(data: Dict) -> Dict:
-    textual_info = data.get("page_text", "")
-    image_description = data.get("page_summary", "")
+    textual_info = data.get("textual_info", "")
+    image_description = data.get("image_description", "")
 
     textual_info_embedding = embedding(text=textual_info)
     textual_info_embedding__1024 = textual_info_embedding[:1024]
@@ -154,7 +152,7 @@ def build_chunk(data: Dict) -> Dict:
 
     return {
         "drawing_id": data.get("drawing_id", ""),
-        "summary": data.get("page_summary", ""),
+        "summary": data.get("summary", ""),
         "image_path": data.get("image_path", ""),
         "image_type": data.get("image_type", ""),
         "image_description": image_description,
@@ -167,8 +165,7 @@ def build_chunk(data: Dict) -> Dict:
         "parts": data.get("parts", []),
         "_dwg_filename": data.get("_dwg_filename", ""),
         "_dwg_filepath": data.get("_dwg_filepath", ""),
-        "_drawing_id": data.get("_drawing_id", ""),
-        "_num_images": data.get("_num_images", 0),
+        "_num_total_images": data.get("_num_total_images", 0),
         "image_url": data.get("image_url", ""),
         "textual_info_embedding": textual_info_embedding,
         "textual_info_embedding__1024": textual_info_embedding__1024,
